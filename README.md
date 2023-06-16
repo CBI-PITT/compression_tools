@@ -65,5 +65,6 @@ python /dir/of/choice/compression_tools/compression_tools/compress_dir.py /direc
 # /output/filename.zip.md5.json
 ```
 
+###### Note:
 
-
+Files in the zip archive will be accessible by any program that can work with zip archives.  However, since the Blosc library was used to compress the data, files will remain in their compressed state until properly decompressed using the Blosc library.  *Stay tuned for a tool that makes decompression easy.*
