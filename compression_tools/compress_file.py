@@ -4,10 +4,12 @@ Created on Thu Jun 15 16:02:10 2023
 
 @author: awatson
 
-A directory can be stored in a single ZIP file using non-zip compression
-The ZIP file is used only as a container to store data.  Each file in the directory is stored as an entry in the
-ZIP file and is independently compressed using a configurable compression codec (numcodecs) - currently
-only Blosc is implemented and ZSTD, clevel 5, SHUFFLE is default
+This module enables compression of a single file.  Files can be compressed as a single unit or can be broken into
+many smaller pieces before compression and stored in a directory representing the original file.  With the latter option,
+very large files can be represented as many smaller pieces for example:
+more efficient storage or compatibility with cloud platforms.
+
+currently only Blosc is implemented and ZSTD, clevel 5, SHUFFLE is default
 """
 
 import dask
@@ -88,6 +90,98 @@ verbose = args.verbose
 
 if verbose > 2:
     print(args)
+
+
+
+def compress_file(in_file, out_dir, compressor, header_length=0, chunk_size_bytes=None, verbose=0, md5=False, md5_verify=False):
+
+    compressor = compressor
+    compressor_config = compressor.get_config()
+
+    file_to_compress = in_file
+    dir_to_dump_files = out_dir
+
+    if chunk_size_bytes is None:
+        chunk_size_bytes = 1073741824# Byte length to generate 1GB (pre compression)
+        # chunk_size_bytes = 2147483646  ## FOR TESTING ONLY
+        ## MAX WORKING FOR BLOSC = 2000000000
+    else:
+        assert isinstance(chunk_size_bytes,int), 'chunk_size_bytes must be an integer - default is 1GB'
+
+    # Make output directory
+    os.makedirs(out_dir, exist_ok=True)
+
+    def read_bytes(filename, start=None, stop=None, length=None):
+        if start is None:
+            start = 0
+
+        with open(filename, 'rb') as f:
+            f.seek(start)
+
+            if length is not None:
+                return f.read(length)
+
+            if stop is not None:
+                return f.read(stop-start)
+
+            return f.read()
+
+    def compress_bytes(byte_string, compressor):
+        return compressor.encode(byte_string)
+
+    def read_and_compress(filename, compressor, start=None, stop=None, length=None):
+        bytes_string = read_bytes(filename, start, stop, length)
+        print(len(bytes_string))
+        return compress_bytes(bytes_string, compressor)
+
+    # Write JSON the describes compression method
+    with open(os.path.join(out_dir,'compressor.json'), 'w') as f:
+        f.write(json.dumps(compressor_config, indent=4))
+    # ('compressor.json', json.dumps(compressor_config, indent=4))
+
+    if header_length > 0:
+        # Read header
+        header = read_and_compress(in_file, compressor, start=0, stop=None, length=header_length)
+
+        out_file = os.path.join(out_dir, 'header')
+
+        # Write compressed header file
+        with open(out_file, 'wb') as f:
+            f.write(header)
+
+
+    # Begin writing file parts
+    # Determine file size
+    with open(in_file, 'rb') as f:
+        f.seek(0, os.SEEK_END)
+        f_size = f.tell()
+
+    file_idx = 0
+    current_location = header_length
+    while current_location <= f_size:
+        stop = current_location + chunk_size_bytes
+        print(f'Reading and compressing chunk {file_idx}')
+        header = read_and_compress(in_file, compressor, start=current_location, stop=stop, length=None)
+
+        # Write compressed file
+        out_file = os.path.join(out_dir,str(file_idx).zfill(5)) #File name
+        print(f'Writing chunk {file_idx}')
+        with open(out_file, 'wb') as f:
+            f.write(header)
+
+        current_location = stop
+        file_idx += 1
+
+
+
+
+
+
+
+
+
+
+
 
 
 def compress_dir(in_dir, out_zip, compressor, verbose=0, md5=False, md5_verify=False):
